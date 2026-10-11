@@ -27,6 +27,7 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: "Alyx"
         # Asked at Play (Controllers.swift); the same text as the game app's.
         INFOPLIST_KEY_NSAccessoryTrackingUsageDescription: "Half-Life: Alyx tracks PlayStation VR2 Sense controllers to use them as the game's controllers."
+        INFOPLIST_KEY_NSHandsTrackingUsageDescription: "Half-Life: Alyx tracks your hands to place them in the game when you play with a game controller."
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UIApplicationPreferredDefaultSceneSessionRole: UIWindowSceneSessionRoleApplication
         MARKETING_VERSION: "0.1"

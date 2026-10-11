@@ -68,6 +68,9 @@ struct KleptonHandState {
     /// Only a Sense controller can press anything, so this is also "are the
     /// buttons meaningful".
     var fromController = false
+    /// Whether a game controller (DualSense, Xbox, ...) supplied the buttons. It has no tracking, so the pose
+    /// still comes from the hand anchor; this only says the buttons must not be replaced by the pinch.
+    var fromGamepad = false
 }
 
 /// `ovrpButton` **raw** bits.
@@ -455,16 +458,35 @@ final class KleptonControllers {
         }
     }
 
+    /// The game controller (DualSense, Xbox, ...) that can stand in for the Sense pair: anything with an
+    /// extended gamepad profile that is not a spatial controller.
+    static func gamepad() -> GCController? {
+        GCController.controllers().first {
+            $0.productCategory != GCProductCategorySpatialController && $0.extendedGamepad != nil
+        }
+    }
+
+    /// A game controller is connected and the Sense pair is not complete, so the hands must supply poses.
+    var gamepadStandsIn: Bool {
+        guard #available(visionOS 26.0, *) else { return false }
+        return Self.gamepad() != nil && Self.spatialControllers().count < 2
+    }
+    private var gamepadWasStandingIn = false
+
     /// Has the paired set changed since the last time this was asked?
     ///
     /// Polled rather than driven off `GCControllerDidConnect`, because the set
     /// is what the provider is built from and a notification would only send us
     /// back here to read it anyway. Cheap: an array compare of a list that is
     /// almost always empty or two long.
+    ///
+    /// A game controller coming or going counts too: it decides whether the session needs hand tracking.
     func spatialControllersChanged() -> Bool {
         let now = Self.spatialControllers()
-        guard now != tracked else { return false }
+        let standsIn = gamepadStandsIn
+        guard now != tracked || standsIn != gamepadWasStandingIn else { return false }
         tracked = now
+        gamepadWasStandingIn = standsIn
         return true
     }
 
@@ -987,6 +1009,7 @@ final class KleptonControllers {
             state[i].buttons = 0; state[i].touches = 0
             state[i].indexTrigger = 0; state[i].handTrigger = 0
             state[i].stick = .zero; state[i].fromController = false
+            state[i].fromGamepad = false
             // Only the Sense path writes these, and it rewrites them below;
             // a hand that falls back must report no motion rather than the
             // motion its controller had before it was put down.
@@ -1242,6 +1265,144 @@ final class KleptonControllers {
             state[hand] = st
             lock.unlock()
         }
+    }
+
+    // MARK: - Game controller
+
+    /// How one game controller is laid over the two virtual hands. `KL_PAD_LAYOUT`:
+    ///
+    ///   * `split` (default) — held in both hands, like a Touch pair: left half drives the left virtual hand,
+    ///     right half the right one.
+    ///   * `left-hand-pad` — held in the LEFT hand only, for a right-handed player. The right hand is free and
+    ///     tracked, so it grabs and shoots; everything the left hand's thumb and index finger reach drives it.
+    ///   * `right-hand-pad` — the mirror image, for a left-handed player.
+    ///
+    /// Names say which real hand holds the pad.
+    private enum PadLayout { case split, leftHandPad, rightHandPad }
+    private static let padLayout: PadLayout = {
+        let v = ProcessInfo.processInfo.environment["KL_PAD_LAYOUT"] ?? "split"
+        let l: PadLayout
+        switch v {
+        case "left-hand-pad":  l = .leftHandPad
+        case "right-hand-pad": l = .rightHandPad
+        case "split":          l = .split
+        default:
+            NSLog("[cp] KL_PAD_LAYOUT=\(v) is not split, left-hand-pad or right-hand-pad — using split")
+            l = .split
+        }
+        NSLog("[cp] game controller layout: \(v)")
+        return l
+    }()
+
+    /// One game controller laid over both virtual hands, for a player with no Sense pair.
+    ///
+    /// The pad has no tracking, so it only supplies buttons: the poses still come from the hand anchors in
+    /// `update()`. Layouts (see `PadLayout`):
+    ///
+    ///   split          left/right stick -> left/right thumbstick, L2/R2 -> index triggers, L1/R1 -> grabs,
+    ///                  square/triangle -> X/Y (left), cross/circle -> A/B (right), L3/R3 -> stick clicks
+    ///   left-hand-pad  left stick -> move (left thumbstick); D-pad left/right -> snap turn (right thumbstick);
+    ///                  L1 -> RIGHT grab; L2 -> RIGHT trigger; D-pad up -> LEFT grab; D-pad down -> A; L3 -> click
+    ///   right-hand-pad the mirror: right stick -> move; square/circle -> snap turn; R1 -> LEFT grab;
+    ///                  R2 -> LEFT trigger; triangle -> RIGHT grab; cross -> X; R3 -> click
+    ///
+    /// Move stays on the left virtual thumbstick and turn on the right one in every layout, because that is
+    /// where the game reads them. Create / Options are the Sense split in all of them.
+    ///
+    /// Only hands with no Sense controller attached are written (`Self.lastAttached`, set by `pollButtons`
+    /// just before this runs), so a real controller always wins its hand. Live element values are read
+    /// every frame rather than queued states: a pad that is held steady still reads as held.
+    private func pollGamepad() {
+        guard #available(visionOS 26.0, *), let pad = Self.gamepad()?.extendedGamepad else { return }
+
+        var sts = [KleptonHandState(), KleptonHandState()]
+        for h in 0...1 { sts[h].fromGamepad = true }
+        func trigger(_ h: Int, _ v: Float) {
+            sts[h].indexTrigger = v
+            if v > 0.1 { sts[h].buttons |= h == 0 ? OVRPRawButton.lIndexTrigger : OVRPRawButton.rIndexTrigger }
+        }
+        func grab(_ h: Int, _ on: Bool) {
+            guard on else { return }
+            sts[h].handTrigger = 1
+            sts[h].buttons |= h == 0 ? OVRPRawButton.lHandTrigger : OVRPRawButton.rHandTrigger
+        }
+        func press(_ h: Int, _ bit: UInt32, _ on: Bool) { if on { sts[h].buttons |= bit } }
+        func xy(_ s: GCControllerDirectionPad) -> SIMD2<Float> { SIMD2(s.xAxis.value, s.yAxis.value) }
+
+        let create = pad.buttonOptions?.isPressed == true      // Create
+        let options = pad.buttonMenu.isPressed                 // Options
+        let l3 = pad.leftThumbstickButton?.isPressed == true
+        let r3 = pad.rightThumbstickButton?.isPressed == true
+        let dp = pad.dpad
+
+        switch Self.padLayout {
+        case .split:
+            sts[0].stick = xy(pad.leftThumbstick); sts[1].stick = xy(pad.rightThumbstick)
+            trigger(0, pad.leftTrigger.value); trigger(1, pad.rightTrigger.value)
+            grab(0, pad.leftShoulder.isPressed); grab(1, pad.rightShoulder.isPressed)
+            press(0, OVRPRawButton.x, pad.buttonX.isPressed)    // square
+            press(0, OVRPRawButton.y, pad.buttonY.isPressed)    // triangle
+            press(1, OVRPRawButton.a, pad.buttonA.isPressed)    // cross
+            press(1, OVRPRawButton.b, pad.buttonB.isPressed)    // circle
+            press(0, OVRPRawButton.lThumbstick, l3)
+            press(1, OVRPRawButton.rThumbstick, r3)
+        case .leftHandPad:
+            sts[0].stick = xy(pad.leftThumbstick)
+            sts[1].stick = SIMD2(dp.xAxis.value, 0)
+            trigger(1, pad.leftTrigger.value)
+            grab(1, pad.leftShoulder.isPressed)
+            grab(0, dp.up.isPressed)
+            press(1, OVRPRawButton.a, dp.down.isPressed)
+            press(0, OVRPRawButton.lThumbstick, l3)
+        case .rightHandPad:
+            sts[0].stick = xy(pad.rightThumbstick)
+            sts[1].stick = SIMD2((pad.buttonB.isPressed ? 1 : 0) - (pad.buttonX.isPressed ? 1 : 0), 0)
+            trigger(0, pad.rightTrigger.value)
+            grab(0, pad.rightShoulder.isPressed)
+            grab(1, pad.buttonY.isPressed)
+            press(0, OVRPRawButton.x, pad.buttonA.isPressed)
+            press(0, OVRPRawButton.lThumbstick, r3)
+        }
+        // Create / Options, as the Sense pair splits them.
+        press(0, OVRPRawButton.start | OVRPRawButton.back, create)
+        press(1, OVRPRawButton.back, options)
+
+        for hand in 0...1 where !Self.lastAttached[hand] {
+            var st = sts[hand]
+            st.buttons |= Self.stickDirectionBits(st.stick, hand: hand)
+            st.touches = st.buttons
+            if Self.ctrlTrace && st.buttons != Self.lastBits[hand] {
+                NSLog(String(format: "[ctrl] %@ (game controller) buttons %#x trigger %.2f grip %.0f stick (%.2f %.2f)",
+                             hand == 0 ? "L" : "R", st.buttons, st.indexTrigger, st.handTrigger, st.stick.x, st.stick.y))
+                Self.lastBits[hand] = st.buttons
+            }
+            lock.lock(); state[hand] = st; lock.unlock()
+        }
+    }
+
+    /// The thumbstick *direction* bits, from the analog position with hysteresis — the same rule as the Sense
+    /// path above, which snap turn depends on (it reads these bits and never the axis).
+    private static func stickDirectionBits(_ s: SIMD2<Float>, hand: Int) -> UInt32 {
+        let onT: Float = 0.5, offT: Float = 0.4
+        func dir(_ v: Float, _ prev: Bool) -> Bool { v >= (prev ? offT : onT) }
+        let latch = hand == 0 ? lStickDir : rStickDir
+        let nd = (up: dir(s.y, latch.up), down: dir(-s.y, latch.down),
+                  left: dir(-s.x, latch.left), right: dir(s.x, latch.right))
+        var bits: UInt32 = 0
+        if hand == 0 {
+            lStickDir = nd
+            if nd.up { bits |= OVRPRawButton.lThumbstickUp }
+            if nd.down { bits |= OVRPRawButton.lThumbstickDown }
+            if nd.left { bits |= OVRPRawButton.lThumbstickLeft }
+            if nd.right { bits |= OVRPRawButton.lThumbstickRight }
+        } else {
+            rStickDir = nd
+            if nd.up { bits |= OVRPRawButton.rThumbstickUp }
+            if nd.down { bits |= OVRPRawButton.rThumbstickDown }
+            if nd.left { bits |= OVRPRawButton.rThumbstickLeft }
+            if nd.right { bits |= OVRPRawButton.rThumbstickRight }
+        }
+        return bits
     }
 
     // MARK: - Haptics
@@ -1733,6 +1894,7 @@ final class KleptonControllers {
     func update(leftHand: HandAnchor?, rightHand: HandAnchor?,
                 at presentationTime: TimeInterval) {
         pollButtons()
+        pollGamepad()
 
         for hand in 0...1 {
             lock.lock()
@@ -1770,7 +1932,11 @@ final class KleptonControllers {
                 //
                 // KL_PINCH_SRC=system|distance isolates one when the question
                 // is which of them is misbehaving.
-                let byDistance = Self.pinchSrc != .system
+                //
+                // With a game controller the fingers are wrapped round the pad, so their distance says
+                // nothing about a click: only the system's recogniser may press, and the pad keeps the
+                // analog trigger.
+                let byDistance = !st.fromGamepad && Self.pinchSrc != .system
                     && (pinchHeld[hand] ? (t > 0.30) : (t > 0.55))
                 let bySystem = Self.pinchSrc != .distance && sysSeen && sysDown
                 let pressed = byDistance || bySystem
@@ -1781,7 +1947,7 @@ final class KleptonControllers {
                 // laser reacts to it and a trigger that snaps 0->1 loses that —
                 // but a press pins it to 1.0 so the axis can never disagree
                 // with the bit.
-                st.indexTrigger = pressed ? 1 : t
+                st.indexTrigger = pressed ? 1 : (st.fromGamepad ? st.indexTrigger : t)
                 pinchHeld[hand] = pressed
                 if pressed {
                     pinchFires[hand] += 1
@@ -1801,7 +1967,7 @@ final class KleptonControllers {
                 // the input push - pollButtons() had the trigger, the guest
                 // never saw it, and a menu gated on "press trigger" waited
                 // forever. Push the buttons; only the pose stays synthesised.
-                if st.fromController {
+                if st.fromController || st.fromGamepad {
                     kl_ovrp_set_controller_input(Int32(hand), st.buttons, st.touches,
                                                  st.indexTrigger, st.handTrigger,
                                                  st.stick.x, st.stick.y)

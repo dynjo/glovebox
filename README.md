@@ -9,7 +9,7 @@ installs it on your headset.
 ## You need
 
 - **Apple Vision Pro** on visionOS 26, with about 75 GB free (tested on M5 and M2)
-- **PlayStation VR2 Sense controllers**
+- **PlayStation VR2 Sense controllers**, or a game controller such as a PS5 DualSense (your tracked hands aim; see the [FAQ](docs/FAQ.md))
 - **Half-Life: Alyx** in your Steam library
 - **A Mac with Apple silicon**, with Xcode
 

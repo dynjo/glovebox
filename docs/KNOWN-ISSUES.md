@@ -5,6 +5,7 @@
 | Close objects look doubled at the edges when you move your head | Moving your head side to side, most on things within arm's reach | Nothing yet. The game draws 45 frames a second and the headset shows each one twice, turned to follow your head's rotation but not its movement. |
 | A few busy scenes run below full speed | Some areas with lots of glass and effects | Nothing yet. |
 | The game uses your PC's settings, such as teleport movement | After your first sync | Your settings come down from Steam Cloud. Change them in the game's options on the headset. |
+| Hands drift or vanish with a game controller | Playing with a DualSense or Xbox pad instead of the Sense controllers | Hold the pad where the headset can see your hands. There is no rumble in this mode. |
 | Left-handed or one-controller mode doesn't work | Choosing it in the game's options | Use the default setup: two controllers, right-handed. |
 | A save from the headset isn't on your PC yet | Right after you quit on the headset | Saves go up the next time you open Glovebox: HLA, because quitting the game closes the app. Open it once more. |
 | Steam's QR code doesn't sign you in | Your account has no Steam Guard Mobile Authenticator, or you scanned with the Camera app | Scan from inside the Steam app, or choose **Sign In with Password**. |

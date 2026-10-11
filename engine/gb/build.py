@@ -233,8 +233,8 @@ def defaults(package, work, foz_path, emit):
             if line.startswith("KL_ALYX_PROFILE_ARGS="):
                 line = line.rstrip("\n") + args_extra + "\n"
             f.write(line)
-        # hand tracking is not compiled in (KLEPTON_NO_HANDS); the Sense controllers are the input
-        f.write("KL_HANDS=0\n")
+        # hands are tracked only while a game controller stands in for the Sense pair (KleptonCompositor.swift)
+        f.write("KL_HANDS=gamepad\n")
         # sysinfo's total RAM: the headset's 16 GB, so the game's minimum-memory notice stays away
         f.write("KL_MEM_TOTAL_MB=16384\n")
         # a new player's movement: continuous, hand-oriented
@@ -244,6 +244,10 @@ def defaults(package, work, foz_path, emit):
                 # the game's own Vulkan device settings (Documents/klfz/device-info.json), for warming the shader cache
                 # before the game starts
                 "KL_VK_DEVICE_INFO=auto\n")
+        # game controller layout (KleptonControllers.swift PadLayout); unset: split
+        pad = os.environ.get("GLOVEBOX_PAD_LAYOUT", "")
+        if pad in ("split", "left-hand-pad", "right-hand-pad"):
+            f.write(f"KL_PAD_LAYOUT={pad}\n")
         # the player's answer to "share stutter reports?" from the Mac app (unset: the headset launcher asks)
         share = os.environ.get("GLOVEBOX_SHARE_STUTTERS", "")
         if share in ("0", "1"):
@@ -361,7 +365,7 @@ def app(package, work, demo, team, emit, provisioning=True, unsigned=False, devi
            # a free Personal Team can have the memory limit but not Extended Virtual Addressing (paid only)
            "KLEPTON_EVA": "0" if free_team else "1",
            "KLEPTON_ALYX_LAUNCHER": os.path.join(ROOT, "launcher"), "KLEPTON_DISPLAY_NAME": man.get("app_name") or man["game"],
-           "KLEPTON_INFOPLIST_SET": os.path.join(pd, man["defaults"]["purpose_strings"]), "KLEPTON_NO_HANDS": "1",
+           "KLEPTON_INFOPLIST_SET": os.path.join(pd, man["defaults"]["purpose_strings"]),
            "KLEPTON_GUEST_DIR": GUEST_DIR, "KLEPTON_BUNDLE_ID": bundle_id_for(team),
            "KLEPTON_APPICON_DIR": os.environ.get("GLOVEBOX_ICON") or (os.path.join(pd, man["icon"]) if man.get("icon") else "")}
     _run([sys.executable, "gen_xcodeproj.py"], emit, "app", cwd=V, env=env, log=os.path.join(work, "project.log"))

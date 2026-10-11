@@ -419,11 +419,19 @@ final class KleptonCompositor {
     /// needs the controllers' buttons, like Alyx, gets nothing from them. Read once when the compositor is made, which
     /// is after boot has applied the app's env file. Built with KL_NO_HANDS (gen_xcodeproj.py KLEPTON_NO_HANDS=1),
     /// hand tracking is not compiled in at all, so the app needs no NSHandsTrackingUsageDescription.
+    /// `KL_HANDS=gamepad` asks for hands only while a game controller stands in for the Sense pair
+    /// (`KleptonControllers.gamepadStandsIn`), so Sense players are never asked for the permission. The
+    /// provider list is fixed per `ARKitSession.run`, hence `runARKit` re-runs when that changes.
     #if KL_NO_HANDS
-    private let handsWanted = false
+    private var handsWanted: Bool { false }
     #else
     private let handTracking = HandTrackingProvider()
-    private let handsWanted = HandTrackingProvider.isSupported && klEnvOn("KL_HANDS", default: true)
+    private let handsMode = ProcessInfo.processInfo.environment["KL_HANDS"]
+    private var handsWanted: Bool {
+        guard HandTrackingProvider.isSupported else { return false }
+        if handsMode == "gamepad" { return controllers.gamepadStandsIn }
+        return klEnvOn("KL_HANDS", default: true)
+    }
     #endif
     private let controllers = KleptonControllers()
     private var arRunning = false

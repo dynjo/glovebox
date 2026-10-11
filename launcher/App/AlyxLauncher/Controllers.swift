@@ -9,6 +9,9 @@ struct ControllerState: Equatable {
     enum Access: Equatable { case notAsked, allowed, denied }
     /// Sense controllers connected right now (the game needs both).
     var connected = 0
+    /// A game controller (DualSense, Xbox, ...) is connected. It supplies buttons and sticks; the
+    /// hands, tracked by the headset, supply the poses.
+    var gamepad = false
     var access = Access.notAsked
 }
 
@@ -32,6 +35,8 @@ extension LauncherModel {
 
     var controllerIssue: ControllerIssue? {
         guard Self.requiresControllers, #available(visionOS 26.0, *) else { return nil }
+        // A game controller stands in for the Sense pair, so accessory tracking doesn't matter then.
+        if controllers.gamepad && controllers.connected < 2 { return nil }
         if controllers.access == .denied { return .trackingDenied }
         if controllers.connected < 2 { return .notConnected(controllers.connected) }
         return nil
@@ -53,9 +58,13 @@ extension LauncherModel {
 
     @available(visionOS 26.0, *)
     private func countControllers() {
-        controllers.connected = GCController.controllers()
+        let all = GCController.controllers()
+        controllers.connected = all
             .filter { $0.productCategory == GCProductCategorySpatialController }.count
-        NSLog("[launcher] Sense controllers connected: \(controllers.connected)")
+        controllers.gamepad = all.contains {
+            $0.productCategory != GCProductCategorySpatialController && $0.extendedGamepad != nil
+        }
+        NSLog("[launcher] Sense controllers connected: \(controllers.connected), game controller: \(controllers.gamepad)")
     }
 
     /// The permission as it stands, without asking: at start, and on coming back from Settings.
@@ -71,6 +80,11 @@ extension LauncherModel {
     /// Play, rather than as the game starts. False if it's turned off.
     func allowControllerTracking() async -> Bool {
         guard Self.requiresControllers, DemoState.current == nil, #available(visionOS 26.0, *) else { return true }
+        // With a game controller the hands supply the poses, so ask for hand tracking instead.
+        if controllers.gamepad && controllers.connected < 2 {
+            let status = await Self.arSession.requestAuthorization(for: [.handTracking] + Self.alsoAsk)
+            return status[.handTracking] != .denied
+        }
         let status = await Self.arSession.requestAuthorization(for: [.accessoryTracking] + Self.alsoAsk)
         controllers.access = .init(status[.accessoryTracking])
         return controllers.access != .denied
@@ -111,7 +125,7 @@ struct ControllerStatus: View {
                         .font(.title3.weight(.semibold))
                     Text(n == 1 ? "Press its PS button." : "Press the PS button on each.")
                         .font(.callout).foregroundStyle(.secondary)
-                    Text("First time? Pair them in Settings › Bluetooth.")
+                    Text("First time? Pair them in Settings › Bluetooth. No Sense controllers? A game controller works too, with your hands for aiming.")
                         .font(.callout).foregroundStyle(.tertiary)
                 case .trackingDenied:
                     Text("Controller tracking is off")

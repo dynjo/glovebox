@@ -18,7 +18,11 @@ No. The game runs on the headset's own chip. The Mac is only needed to build and
 
 ### Which controllers work?
 
-PS VR2 Sense controllers. Half-Life: Alyx needs buttons, sticks and triggers, so hand tracking alone isn't supported.
+PS VR2 Sense controllers, the best way to play. Half-Life: Alyx needs buttons, sticks and triggers, so hand tracking alone isn't supported.
+
+A game controller (PS5 DualSense, Xbox) also works, as a fallback: its sticks, triggers and buttons drive the game and the headset tracks your hands for aiming. Left stick and right stick move and turn, L2/R2 are the triggers, L1/R1 grab, and the face buttons are A/B/X/Y (cross and circle on the right hand, square and triangle on the left). Hand tracking can lose your hands while they hold the pad, so expect rougher aiming than with the Sense controllers.
+
+To play with the pad in one hand and keep the other hand free and tracked, build with `GLOVEBOX_PAD_LAYOUT=left-hand-pad` (pad in your left hand; `right-hand-pad` mirrors it). The left stick moves, L1 grabs and L2 fires with your right hand, the D-pad turns, and D-pad up grabs with the left hand.
 
 ### How long does installing take?
 
